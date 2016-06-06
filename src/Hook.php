@@ -2,6 +2,8 @@
 
 namespace Silk;
 
+use Illuminate\Support\Collection;
+
 class Hook
 {
     protected $handle;
@@ -15,6 +17,11 @@ class Hook
     protected $iterations;
 
     protected $maxIterations;
+
+    /**
+     * @var Collection
+     */
+    protected $conditions;
 
 
     /**
@@ -38,23 +45,28 @@ class Hook
     {
         $this->handle = $handle;
         $this->priority = $priority;
+        $this->conditions = new Collection([
+            new Callback([$this, 'hasNotExceededIterations'])
+        ]);
     }
 
     /**
-     * [setCallback description]
-     * @param callable $callback [description]
+     * Set the callback invoked by the hook
+     *
+     * @param callable $callback
      */
     public function setCallback(callable $callback)
     {
         $this->callback = new Callback($callback);
-        $this->callbackParamCount = $this->callback->reflect()->getNumberOfParameters();
+        $this->callbackParamCount = $this->callback->parameterCount();
 
         return $this;
     }
 
     /**
      * Set the hook in WP
-     * @return [type] [description]
+     *
+     * @return $this
      */
     public function listen()
     {
@@ -65,7 +77,8 @@ class Hook
 
     /**
      * Unset the hook in WP
-     * @return [type] [description]
+     *
+     * @return $this
      */
     public function remove()
     {
@@ -75,8 +88,9 @@ class Hook
     }
 
     /**
-     * [mediateCallback description]
-     * @return [type] [description]
+     * Handle the callback from WordPress
+     *
+     * @return mixed
      */
     public function mediateCallback($given = null)
     {
@@ -87,19 +101,31 @@ class Hook
         return $this->invokeCallback(func_get_args());
     }
 
-    public function shouldInvoke(array $args)
+    /**
+     * Whether or not the callback should be invoked
+     *
+     * @param  array  $args arguments being passed to the callback
+     *
+     * @return boolean
+     */
+    protected function shouldInvoke(array $args)
     {
-        if ($this->hasExceededIterations()) {
-            return false;
-        }
-
-        return true;
+        /**
+         * Find the first condition which returns false.
+         * If it returns anything, that means that a condition failed,
+         * thus the callback should not be invoked!
+         */
+        return ! $this->conditions->first(function ($index, Callback $callback) use ($args) {
+            return false === $callback->callArray($args);
+        });
     }
 
     /**
-     * [invokeCallback description]
-     * @param  [type] $arguments [description]
-     * @return [type]            [description]
+     * Invoke the registered callback
+     *
+     * @param  array $arguments
+     *
+     * @return mixed callback Returns the return value of the callback.
      */
     protected function invokeCallback($arguments)
     {
@@ -111,8 +137,9 @@ class Hook
     }
 
     /**
-     * [once description]
-     * @return [type] [description]
+     * Limit the callback to only be invoked once
+     *
+     * @return $this
      */
     public function once()
     {
@@ -122,9 +149,11 @@ class Hook
     }
 
     /**
-     * [onlyXtimes description]
-     * @param  [type] $times [description]
-     * @return [type]        [description]
+     * Limit the number of times the callback can be invoked
+     *
+     * @param  int $times
+     *
+     * @return $this
      */
     public function onlyXtimes($times)
     {
@@ -134,8 +163,9 @@ class Hook
     }
 
     /**
-     * Prevent the callback from being triggered again
-     * @return [type] [description]
+     * Prevent the callback from being invoked again
+     *
+     * @return $this
      */
     public function bypass()
     {
@@ -145,9 +175,11 @@ class Hook
     }
 
     /**
-     * [withPriority description]
-     * @param  [type] $priority [description]
-     * @return [type]           [description]
+     * Set the registered priority of the callback on the given hook.
+     *
+     * @param  mixed $priority  Hook priority
+     *
+     * @return $this
      */
     public function withPriority($priority)
     {
@@ -161,10 +193,37 @@ class Hook
     }
 
     /**
-     * [hasExceededIterations description]
-     * @return boolean [description]
+     * Add a condition to control invocation of the callback
+     *
+     * If the condition returns FALSE, the hook's callback will not be invoked.
+     *
+     * @param  callable $callback
+     *
+     * @return $this
      */
-    protected function hasExceededIterations()
+    public function onlyIf(callable $callback)
+    {
+        $this->conditions->push(new Callback($callback));
+
+        return $this;
+    }
+
+    /**
+     * If the callback has NOT exceeded the limit of allowed iterations
+     *
+     * @return boolean  true for NOT exceeded, otherwise false
+     */
+    public function hasNotExceededIterations()
+    {
+        return ! $this->hasExceededIterations();
+    }
+
+    /**
+     * Whether or not the callback has met the limit of allowed iterations
+     *
+     * @return boolean  true for exceeded, otherwise false
+     */
+    public function hasExceededIterations()
     {
         return ($this->maxIterations > -1) && ($this->iterations >= $this->maxIterations);
     }
